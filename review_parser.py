@@ -2,7 +2,7 @@ import json
 import csv
 from collections import defaultdict
 import random
-
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 
 def parse_restaurant_ids(num_of_restaurants=2500):
@@ -27,7 +27,7 @@ def parse_restaurant_ids(num_of_restaurants=2500):
     return restaurants
 
 
-def parse_review_big(restaurant_ids, total_reviews_limit=50000):
+def parse_review(restaurant_ids, total_reviews_limit=50000):
     """
     Retrieve reviews  from the dataset  that correspond to the restaurant ids.
     :param restaurant_ids:  array of restauratn ids
@@ -59,6 +59,38 @@ def parse_review_big(restaurant_ids, total_reviews_limit=50000):
                     star_stat[int(review['stars']) - 1] += 1
                     print("Reviews Obtained: ", sum(star_stat))
             print(star_stat)
+        csvfile.close()
+    file.close()
+
+def get_sentiment_info(review):
+    sid = SentimentIntensityAnalyzer()
+    sentiment_stat = [0] * 5
+    ss = sid.polarity_scores(review)
+    sentiment_stat[0] = ss['neg']
+    sentiment_stat[1] = ss['pos']
+    sentiment_stat[2] = ss['neu']
+    sentiment_stat[3] = ss['compound']
+    sentiment_stat[4] = ss['pos'] - ss['neg']
+    return sentiment_stat
+
+
+def parse_sentiment():
+    with open('./dataset/parsed_review.csv', 'r', encoding='utf-8', newline='') as review_file:
+        with open('./dataset/parsed_review_sentiment.csv', 'w', encoding='utf-8', newline='') as review_sentiment_file:
+            fieldnames = ['0', '1', '2', '3', '4']
+            writer = csv.DictWriter(review_sentiment_file, fieldnames=fieldnames)
+            writer.writeheader()
+            reader = csv.DictReader(review_file)
+            count = 0
+            for row in reader:
+                text = row['text']
+                sentiment_stat = get_sentiment_info(text)
+                writer.writerow(
+                    {'0': sentiment_stat[0], '1': sentiment_stat[1],'2': sentiment_stat[2],'3': sentiment_stat[3],'4': sentiment_stat[4] })
+                count +=1
+                print(count)
+        review_sentiment_file.close()
+    review_file.close()
 
 
 """  Don't need anymore
@@ -93,6 +125,7 @@ def parse_review(restaurants):
 """
 
 if __name__ == '__main__':
-    restaurants = parse_restaurant_ids()
+    #restaurants = parse_restaurant_ids()
     # parse_review(set(restaurants))   # don't need anymore
-    parse_review_big(restaurants)
+    #parse_review(restaurants)
+    parse_sentiment()

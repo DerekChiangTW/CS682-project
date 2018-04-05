@@ -100,7 +100,7 @@ model.compile(optimizer='adam',
               loss={'main_output': 'sparse_categorical_crossentropy', 'aux_output': 'sparse_categorical_crossentropy',
                     'sent_side_output': 'sparse_categorical_crossentropy'},
               metrics=['accuracy'],
-              loss_weights={'main_output': 0.5, 'aux_output': 0.3, 'sent_side_output': 0.2})
+              loss_weights={'main_output': 0.6, 'aux_output': 0.25, 'sent_side_output': 0.15})
 
 earlystop = EarlyStopping(monitor='val_main_output_acc',min_delta=0.05, patience=3)
 
