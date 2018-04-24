@@ -3,20 +3,20 @@ import numpy as np
 import random
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from sklearn.naive_bayes import GaussianNB
+from nltk.tokenize import sent_tokenize, word_tokenize
+from scipy import sparse
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
 from sklearn.naive_bayes import MultinomialNB, GaussianNB, BernoulliNB
 from nltk.stem.porter import *
 from sklearn.utils import shuffle
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV
-from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
-from sklearn.naive_bayes import GaussianNB
 from sklearn.ensemble import RandomForestClassifier
 import matplotlib.pyplot as plt
 from sklearn import metrics
-from nltk.tokenize import sent_tokenize, word_tokenize
-from scipy import sparse
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
 import csv, re
 import numpy as np
 from sklearn.feature_extraction.text import CountVectorizer
@@ -79,10 +79,9 @@ def append_sentiment_info(data_sparse_matrix, original_data):
     data_sparse_matrix = np.matrix(data_sparse_matrix)
     return sparse.csr_matrix(data_sparse_matrix)
 
-def get_data(data_limit = 40000):
-    rows = []
-    row_count = 0
-    with open('./dataset/parsed_review.csv', encoding='utf-8') as csvfile:
+def get_data(filepath, data_limit = 40000):
+    rows, row_count = [], 0
+    with open(filepath, encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
             if row_count > data_limit:
@@ -90,89 +89,83 @@ def get_data(data_limit = 40000):
             rows.append(row)
             row_count += 1
     csvfile.close()
+
     rows = shuffle(rows, random_state=7)
-    X_train, y_train, X_test, y_test = [], [], [], []
+    X, y= [], []
     translator = str.maketrans('', '', string.punctuation)
     for i in range(len(rows)): # basic split with a little bit of pre-processing
-        if i < int(0.8 * len(rows)):
-            X_train.append(rows[i]['text'].replace('\'', ' ').translate(translator))
-            y_train.append(rows[i]['stars'])
-        else:
-            X_test.append(rows[i]['text'].replace('\'', ' ').translate(translator))
-            y_test.append(rows[i]['stars'])
+        X.append(rows[i]['text'].replace('\'', ' ').translate(translator))
+        y.append(rows[i]['stars'])
+        rows[i] = None # release the memory
 
-    rows = None  # release the memory
+    return (X, y)
 
-    return (X_train, y_train, X_test, y_test)
+def data_preprocessing(data, is_train, count_vect, tf_transformer, include_sentiment = False):
 
-def data_preprocessing(X_train, X_test, unigram = False, include_sentiment = False):
+    # Bag of words
+    data_backup_use, backup_data = None, None
 
-    stemmer = PorterStemmer()
-    analyzer = CountVectorizer().build_analyzer()
+    backup_data_to_use = copy.copy(data)
+    backup_data = copy.copy(data)
 
-    def stemmed_words(doc):
-        return (stemmer.stem(w) for w in analyzer(doc))
+    if is_train:  # if training data, train the tf_transformer
+        train_counts = count_vect.fit_transform(backup_data_to_use)
+        tf_transformer.fit(train_counts)
+    else:
+        train_counts = count_vect.transform(backup_data_to_use)
 
-    count_vect = CountVectorizer(stop_words='english', analyzer=stemmed_words,
-                                 ngram_range=(1, 1) if unigram else (1, 2))
-    tf_transformer = TfidfTransformer(use_idf=True)
+    word_count_feat = tf_transformer.transform(train_counts)
+    # Adding sentiments
+    if include_sentiment:
+        backup_data_to_use = append_sentiment_info(backup_data, word_count_feat)
+    else:
+        backup_data_to_use = word_count_feat
 
-    for is_train in [True, False]: # train + tranform on the train data, and then tranform the test data
-        # Bag of words
-        data_backup_use, data_backup = None, None
-
-        if is_train:
-            data_backup_use = copy.copy(X_train)
-            data_backup = copy.copy(X_train)
-        else:
-            data_backup_use = copy.copy(X_test)
-            data_backup = copy.copy(X_test)
-
-        train_counts = count_vect.fit_transform(data_backup_use)
-
-        if is_train: # if training data, train the tf_transformer
-            tf_transformer.fit(train_counts)
-
-        word_count_feat = tf_transformer.transform(train_counts)
-        # Adding sentiments
-        if include_sentiment:
-            data_backup_use = append_sentiment_info(data_backup, word_count_feat)
-        else:
-            data_backup_use = word_count_feat
-
-        if is_train:  # if training data, train the tf_transformer
-            X_train = data_backup_use
-        else:
-            X_test = data_backup_use
-
-    return (X_train, X_test)
+    processed = backup_data_to_use
+    return count_vect, tf_transformer, processed
 
 def train_classifier(clf, X_train, y_train, X_test, y_test):
     # Starting training
-    for chosen_clf in clf_to_run:
-        text_clf = Pipeline([
-            ('clf', clf['classifier']),
-        ])
+    text_clf = Pipeline([
+        ('clf', clf['classifier']),
+    ])
 
-        parameters = {}
-        parameters[clf['hp_name']] = clf['hps']
-        gs_clf = GridSearchCV(text_clf, parameters, verbose=10, n_jobs=6)
-        gs_clf = gs_clf.fit(X_train, y_train)
-        print(gs_clf.best_score_)
-        print(gs_clf.best_estimator_)
+    parameters = {}
+    parameters[clf['hp_name']] = clf['hps']
+    gs_clf = GridSearchCV(text_clf, parameters, verbose=10, n_jobs=6)
+    gs_clf = gs_clf.fit(X_train, y_train)
+    print(gs_clf.best_score_)
+    print(gs_clf.best_estimator_)
 
-        print(gs_clf.cv_results_['mean_test_score'].tolist())
-        print(gs_clf.cv_results_['mean_train_score'].tolist())
-        hp_vs_score_plot(clf['hps'],
-                         gs_clf.cv_results_['mean_test_score'].tolist(),
-                         gs_clf.cv_results_['mean_train_score'].tolist(), chosen_clf, clf['hp_name'])
+    print(gs_clf.cv_results_['mean_test_score'].tolist())
+    print(gs_clf.cv_results_['mean_train_score'].tolist())
+    hp_vs_score_plot(clf['hps'],
+                     gs_clf.cv_results_['mean_test_score'].tolist(),
+                     gs_clf.cv_results_['mean_train_score'].tolist(), clf['name'], clf['hp_name'])
 
-        predicted = gs_clf.predict(X_test)
-        print(metrics.classification_report(y_test, predicted))
+    predicted = gs_clf.predict(X_test)
+    print(metrics.classification_report(y_test, predicted))
 
 if __name__ == '__main__':
-    X_train, y_train, X_test, y_test = get_data( data_limit=1000)
-    X_train, X_test = data_preprocessing(X_train, X_test)
+
+
+    filepath_train = __file__[:-30] + '/dataset/train_review.csv'
+    filepath_test = __file__[:-30] + '/dataset/test_review.csv'
+    X_train, y_train = get_data(filepath_train, data_limit=100000)
+    X_test, y_test = get_data(filepath_test, data_limit=100000)
+    # ********************************************************************
+    unigram = True
+    stemmer = PorterStemmer()
+    analyzer = CountVectorizer().build_analyzer()
+    def stemmed_words(doc):
+        return (stemmer.stem(w) for w in analyzer(doc))
+    count_vect = CountVectorizer(stop_words='english', analyzer=stemmed_words,
+                                 ngram_range=(1, 1) if unigram else (1, 2))
+    tf_transformer = TfidfTransformer(use_idf=True)
+    count_vect, tf_transformer, X_train = data_preprocessing(X_train, True, count_vect, tf_transformer)
+    count_vect, tf_transformer, X_test = data_preprocessing(X_test, False, count_vect, tf_transformer)
+
+    # ********************************************************************
 
     clf_NB, clf_RF, clf_LR = {}, {}, {}
     clfs = [clf_NB, clf_RF, clf_LR]
